@@ -1,5 +1,4 @@
-﻿
-// BoundingBox.cs
+﻿// BoundingBox.cs
 public class BoundingBox
 {
     public double MinX, MinY, MaxX, MaxY;
@@ -33,13 +32,14 @@ public class BoundingBox
     }
 }
 
+
 // RTreeNode.cs
 public class RTreeNode
 {
     public List<RTreeNode> Children = new();
     public BoundingBox Box;
     public bool IsLeaf;
-    public object? Data; // Only for leaf nodes
+    public object? Data;
 
     public RTreeNode(BoundingBox box, bool isLeaf, object? data = null)
     {
@@ -52,8 +52,14 @@ public class RTreeNode
 // RTree.cs
 public class RTree
 {
-    private int MaxEntries = 4;
-    private RTreeNode Root = new(new BoundingBox(0, 0, 0, 0), true);
+    private readonly int MaxEntries;
+    private RTreeNode Root;
+
+    public RTree(int maxEntries = 4)
+    {
+        MaxEntries = maxEntries;
+        Root = new RTreeNode(new BoundingBox(0, 0, 0, 0), true);
+    }
 
     public void Insert(BoundingBox box, object data)
     {
@@ -62,9 +68,7 @@ public class RTree
         AdjustTree(leaf);
 
         if (leaf.Children.Count > MaxEntries)
-        {
-            SplitNode(leaf);
-        }
+            HandleOverflow(leaf);
     }
 
     public List<object> Search(BoundingBox queryBox)
@@ -76,17 +80,15 @@ public class RTree
 
     private RTreeNode ChooseLeaf(RTreeNode node, BoundingBox box)
     {
-        if (node.IsLeaf || node.Children.Count == 0)
-            return node;
+        if (node.IsLeaf) return node;
 
         RTreeNode bestChild = node.Children[0];
         double minIncrease = double.MaxValue;
 
         foreach (var child in node.Children)
         {
-            double currentArea = child.Box.Area();
-            double enlargedArea = BoundingBox.Combine(child.Box, box).Area();
-            double increase = enlargedArea - currentArea;
+            var enlargedArea = BoundingBox.Combine(child.Box, box).Area();
+            var increase = enlargedArea - child.Box.Area();
 
             if (increase < minIncrease)
             {
@@ -100,49 +102,112 @@ public class RTree
 
     private void AdjustTree(RTreeNode node)
     {
-        while (node != null)
+        while (true)
         {
-            if (node.Children.Count > 0)
-            {
-                var newBox = node.Children[0].Box;
-                foreach (var child in node.Children)
-                    newBox = BoundingBox.Combine(newBox, child.Box);
+            var parent = FindParent(Root, node);
+            if (parent == null) break;
 
-                node.Box = newBox;
-            }
+            var newBox = parent.Children[0].Box;
+            foreach (var child in parent.Children)
+                newBox = BoundingBox.Combine(newBox, child.Box);
 
-            node = FindParent(Root, node);
+            parent.Box = newBox;
+            node = parent;
         }
     }
 
-    private void SplitNode(RTreeNode node)
+    private void HandleOverflow(RTreeNode node)
     {
-        if (node.Children.Count <= MaxEntries) return;
-
-        // Simple linear split (not optimal but straightforward)
-        var sortedByX = node.Children.OrderBy(n => n.Box.MinX).ToList();
-        var group1 = sortedByX.Take(MaxEntries / 2).ToList();
-        var group2 = sortedByX.Skip(MaxEntries / 2).ToList();
-
         var parent = FindParent(Root, node);
         if (parent == null)
         {
-            parent = new RTreeNode(new BoundingBox(0, 0, 0, 0), false);
-            Root = parent;
+            var newRoot = new RTreeNode(new BoundingBox(0, 0, 0, 0), false);
+            Root = newRoot;
+            parent = Root;
+            parent.Children.Add(node);
         }
 
+        var (group1, group2) = QuadraticSplit(node.Children);
+
+        var node1 = new RTreeNode(CalculateBoundingBox(group1), node.IsLeaf) { Children = group1 };
+        var node2 = new RTreeNode(CalculateBoundingBox(group2), node.IsLeaf) { Children = group2 };
+
         parent.Children.Remove(node);
-
-        var node1 = new RTreeNode(new BoundingBox(0, 0, 0, 0), node.IsLeaf);
-        node1.Children = group1;
-        AdjustTree(node1);
-
-        var node2 = new RTreeNode(new BoundingBox(0, 0, 0, 0), node.IsLeaf);
-        node2.Children = group2;
-        AdjustTree(node2);
-
         parent.Children.Add(node1);
         parent.Children.Add(node2);
+
+        AdjustTree(parent);
+
+        if (parent.Children.Count > MaxEntries)
+            HandleOverflow(parent);
+    }
+
+    private (List<RTreeNode>, List<RTreeNode>) QuadraticSplit(List<RTreeNode> entries)
+    {
+        var group1 = new List<RTreeNode>();
+        var group2 = new List<RTreeNode>();
+        var used = new HashSet<RTreeNode>();
+
+        double maxD = -1;
+        RTreeNode? seed1 = null, seed2 = null;
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            for (int j = i + 1; j < entries.Count; j++)
+            {
+                var box = BoundingBox.Combine(entries[i].Box, entries[j].Box);
+                double d = box.Area() - entries[i].Box.Area() - entries[j].Box.Area();
+                if (d > maxD)
+                {
+                    maxD = d;
+                    seed1 = entries[i];
+                    seed2 = entries[j];
+                }
+            }
+        }
+
+        group1.Add(seed1!); used.Add(seed1!);
+        group2.Add(seed2!); used.Add(seed2!);
+
+        while (used.Count < entries.Count)
+        {
+            RTreeNode? next = null;
+            double maxDiff = double.MinValue;
+            bool assignToGroup1 = true;
+
+            foreach (var e in entries)
+            {
+                if (used.Contains(e)) continue;
+
+                double areaInc1 = BoundingBox.Combine(CalculateBoundingBox(group1), e.Box).Area() - CalculateBoundingBox(group1).Area();
+                double areaInc2 = BoundingBox.Combine(CalculateBoundingBox(group2), e.Box).Area() - CalculateBoundingBox(group2).Area();
+                double diff = Math.Abs(areaInc1 - areaInc2);
+
+                if (diff > maxDiff)
+                {
+                    maxDiff = diff;
+                    assignToGroup1 = areaInc1 < areaInc2;
+                    next = e;
+                }
+            }
+
+            if (next != null)
+            {
+                if (assignToGroup1) group1.Add(next);
+                else group2.Add(next);
+                used.Add(next);
+            }
+        }
+
+        return (group1, group2);
+    }
+
+    private BoundingBox CalculateBoundingBox(List<RTreeNode> nodes)
+    {
+        var box = nodes[0].Box;
+        for (int i = 1; i < nodes.Count; i++)
+            box = BoundingBox.Combine(box, nodes[i].Box);
+        return box;
     }
 
     private RTreeNode? FindParent(RTreeNode root, RTreeNode child)
@@ -151,9 +216,10 @@ public class RTree
 
         foreach (var node in root.Children)
         {
-            var result = FindParent(node, child);
-            if (result != null) return result;
+            var found = FindParent(node, child);
+            if (found != null) return found;
         }
+
         return null;
     }
 
@@ -163,34 +229,51 @@ public class RTree
 
         if (node.IsLeaf && node.Data != null)
         {
-            if (node.Box.Intersects(queryBox))
-                result.Add(node.Data);
+            result.Add(node.Data);
         }
         else
         {
             foreach (var child in node.Children)
-            {
                 SearchRecursive(child, queryBox, result);
-            }
         }
     }
 }
 
-public class Program
+
+class Program
 {
     static void Main()
     {
-        var rtree = new RTree();
+        var rtree = new RTree(maxEntries: 3); // Lower number to force splits
 
-        rtree.Insert(new BoundingBox(0, 0, 10, 10), "A");
-        rtree.Insert(new BoundingBox(5, 5, 15, 15), "B");
-        rtree.Insert(new BoundingBox(20, 20, 30, 30), "C");
-        rtree.Insert(new BoundingBox(25, 25, 28, 28), "D");
+        // Insert sample rectangles with IDs
+        var rectangles = new List<(BoundingBox box, string label)>
+        {
+            (new BoundingBox(0, 0, 2, 2), "A"),
+            (new BoundingBox(1, 1, 3, 3), "B"),
+            (new BoundingBox(4, 4, 6, 6), "C"),
+            (new BoundingBox(5, 5, 7, 7), "D"),
+            (new BoundingBox(8, 8, 10, 10), "E"),
+            (new BoundingBox(9, 1, 11, 2), "F"),
+            (new BoundingBox(2, 5, 3, 6), "G"),
+        };
 
-        var query = new BoundingBox(8, 8, 22, 22);
-        var results = rtree.Search(query);
+        foreach (var (box, label) in rectangles)
+        {
+            rtree.Insert(box, label);
+            Console.WriteLine($"Inserted rectangle {label}: ({box.MinX}, {box.MinY}, {box.MaxX}, {box.MaxY})");
+        }
 
-        foreach (var r in results)
-            Console.WriteLine(r);
+        // Define a search area
+        var searchBox = new BoundingBox(1, 1, 5, 5);
+        Console.WriteLine($"\nSearching in box: ({searchBox.MinX}, {searchBox.MinY}, {searchBox.MaxX}, {searchBox.MaxY})");
+
+        var results = rtree.Search(searchBox);
+
+        Console.WriteLine("Results found:");
+        foreach (var result in results)
+        {
+            Console.WriteLine($" - {result}");
+        }
     }
 }
