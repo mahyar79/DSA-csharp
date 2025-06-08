@@ -138,17 +138,17 @@ public class RTree<T> where T : class
         PrintNode(Root, 0);
     }
 
-    //public TreeStats GetStats()
-    //{
-    //    var stats = new TreeStats();
-    //    int totalNodes = 0, totalLeaves = 0, totalChildren = 0;
-    //   // int height = GetHeight(Root, ref totalNodes, ref totalLeaves, ref totalChildren);
-    //    stats.NodeCount = totalNodes;
-    //    stats.LeafCount = totalLeaves;
-    //  //  stats.Height = height;
-    //    stats.AverageNodeFill = totalNodes > 0 ? (double)totalChildren / totalNodes : 0;
-    //    return stats;
-    //}
+    public TreeStats GetStats()
+    {
+        var stats = new TreeStats();
+        int totalNodes = 0, totalLeaves = 0, totalChildren = 0;
+         int height = GetHeight(Root, ref totalNodes, ref totalLeaves, ref totalChildren);
+        stats.NodeCount = totalNodes;
+        stats.LeafCount = totalLeaves;
+          stats.Height = height;
+        stats.AverageNodeFill = totalNodes > 0 ? (double)totalChildren / totalNodes : 0;
+        return stats;
+    }
 
     private RTreeNode<T> ChooseLeaf(RTreeNode<T> node, BoundingBox box)
     {
@@ -605,14 +605,6 @@ public class RTree<T> where T : class
     }
 
 
-}
-
-public class TreeStats
-{
-    public int NodeCount { get; set; }
-    public int LeafCount { get; set; }
-    public int Height { get; set; }
-    public double AverageNodeFill { get; set; }
 }
 
 
